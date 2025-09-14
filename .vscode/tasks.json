@@ -1,20 +1,34 @@
 {
-    "label": "build arduino plotter",
-    "type": "shell",
-    "command": "g++",
-    "args": [
-        "-std=c++17",
-        "-DUNICODE=0", 
-        "-D_UNICODE=0",
-        "-IC:/msys64/mingw64/include",  // ✅ include로 수정
-        "-LC:/msys64/mingw64/lib",      // ✅ lib 유지
-        "\"${file}\"",
-        "-lsfml-graphics",
-        "-lsfml-window", 
-        "-lsfml-system",
-        "-o",
-        "\"${fileDirname}/arduino_plotter.exe\""
-    ],
-    "group": "build",
-    "problemMatcher": ["$gcc"]
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build arduino plotter",
+            "type": "shell",
+            "command": "g++",
+            "args": [
+                "-std=c++17",
+                "-DUNICODE=0", 
+                "-D_UNICODE=0",
+                "-IC:/msys64/mingw64/include",
+                "-LC:/msys64/mingw64/lib",
+                "${file}",
+                "-lsfml-graphics",
+                "-lsfml-window", 
+                "-lsfml-system",
+                "-o",
+                "${fileDirname}/arduino_plotter.exe"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$gcc"],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        }
+    ]
 }

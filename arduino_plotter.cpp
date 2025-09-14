@@ -6,12 +6,14 @@
 #include <string>
 #include <deque>
 #include <mutex>
+#include <io.h>
 
 // Windows용 시리얼 통신
 #ifdef _WIN32
 #include <windows.h>
 #include <locale>
 #include <codecvt>
+#include <fcntl.h>
 #else
 #include <unistd.h>
 #include <fcntl.h>
@@ -52,7 +54,7 @@ public:
         );
         
         if (hSerial == INVALID_HANDLE_VALUE) {
-            throw std::runtime_error("시리얼 포트 열기 실패: " + port);
+            throw std::runtime_error("Failed to open serial port: " + port);
         }
         
         // 시리얼 포트 설정
@@ -61,7 +63,7 @@ public:
         
         if (!GetCommState(hSerial, &dcbSerialParams)) {
             CloseHandle(hSerial);
-            throw std::runtime_error("시리얼 상태 가져오기 실패");
+            throw std::runtime_error("Failed to get serial state");
         }
         
         dcbSerialParams.BaudRate = baudRate;
@@ -71,7 +73,7 @@ public:
         
         if (!SetCommState(hSerial, &dcbSerialParams)) {
             CloseHandle(hSerial);
-            throw std::runtime_error("시리얼 설정 실패");
+            throw std::runtime_error("Failed to set serial configuration");
         }
         
         // 타임아웃 설정 (논블로킹)
@@ -85,7 +87,7 @@ public:
         // Linux/Mac 시리얼 포트 초기화
         serialfd = open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
         if (serialfd == -1) {
-            throw std::runtime_error("시리얼 포트 열기 실패: " + port);
+            throw std::runtime_error("Failed to open serial port: " + port);
         }
         
         struct termios options;
@@ -104,7 +106,7 @@ public:
         tcsetattr(serialfd, TCSANOW, &options);
 #endif
         
-        std::cout << "시리얼 포트 연결 완료: " << port << std::endl;
+        std::cout << "Serial port connected: " << port << std::endl;
     }
     
     ~SerialReader() {
@@ -197,8 +199,8 @@ private:
                 samplesInPeriod = 0;
                 lastTime = currentTime;
                 
-                std::cout << "속도: " << (int)rate << " Hz, 데이터: " 
-                         << dataBuffer.size() << "개" << std::endl;
+                std::cout << "Rate: " << (int)rate << " Hz, Data: " 
+                         << dataBuffer.size() << " samples" << std::endl;
             }
             
             // CPU 부하 감소
@@ -220,15 +222,43 @@ private:
     
 public:
     RealtimePlotter(SerialReader& reader) 
-        : window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Arduino ADC 실시간 데이터")
+        : window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Arduino ADC Real-time Data")
         , serialReader(reader) {
         
         window.setFramerateLimit(60);
         
-        // 폰트 로드 (시스템 기본 폰트 사용)
-        if (!font.loadFromFile("C:/Windows/Fonts/arial.ttf")) {
-            // Windows가 아니거나 폰트 로드 실패시 기본값 사용
-            std::cout << "폰트 로드 실패, 기본 폰트 사용" << std::endl;
+        // Load system font (cross-platform)
+        bool fontLoaded = false;
+#ifdef _WIN32
+        // Try common Windows font paths
+        std::vector<std::string> windowsFonts = {
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/calibri.ttf", 
+            "C:/Windows/Fonts/tahoma.ttf"
+        };
+        for (const auto& fontPath : windowsFonts) {
+            if (font.loadFromFile(fontPath)) {
+                fontLoaded = true;
+                break;
+            }
+        }
+#else
+        // Try common Linux/Mac font paths
+        std::vector<std::string> unixFonts = {
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/arial.ttf",
+            "/System/Library/Fonts/Arial.ttf",  // macOS
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+        };
+        for (const auto& fontPath : unixFonts) {
+            if (font.loadFromFile(fontPath)) {
+                fontLoaded = true;
+                break;
+            }
+        }
+#endif
+        if (!fontLoaded) {
+            std::cout << "Font load failed, using default font" << std::endl;
         }
     }
     
@@ -307,7 +337,7 @@ private:
     void drawInfo() {
         sf::Text title;
         title.setFont(font);
-        title.setString("Arduino ADC 실시간 데이터 - " + 
+        title.setString("Arduino ADC Real-time Data - " + 
                        std::to_string((int)serialReader.getDataRate()) + " Hz");
         title.setCharacterSize(24);
         title.setFillColor(sf::Color::White);
@@ -334,32 +364,49 @@ private:
 
 int main() {
     try {
-        std::cout << "Arduino 연결 중..." << std::endl;
-        
-        // COM 포트는 시스템에 맞게 변경 필요
-        std::string port;
 #ifdef _WIN32
-        port = "COM6";
-#else
-        port = "/dev/ttyACM0";  // Linux/Mac
+        // Windows 콘솔 UTF-8 인코딩 설정
+        SetConsoleOutputCP(CP_UTF8);
+        SetConsoleCP(CP_UTF8);
 #endif
+        std::cout << "Arduino connecting..." << std::endl;
+        
+        // Get serial port from user input
+        std::string port;
+        std::cout << "Enter serial port (e.g., ";
+#ifdef _WIN32
+        std::cout << "COM6): ";
+#else
+        std::cout << "/dev/ttyACM0): ";
+#endif
+        std::getline(std::cin, port);
+        
+        // Use default if empty
+        if (port.empty()) {
+#ifdef _WIN32
+            port = "COM6";
+#else
+            port = "/dev/ttyACM0";
+#endif
+            std::cout << "Using default port: " << port << std::endl;
+        }
         
         SerialReader reader(port, 2000000);
         reader.startReading();
         
-        // 잠시 대기 (Arduino 초기화)
+        // Wait for Arduino initialization
         std::this_thread::sleep_for(std::chrono::seconds(2));
         
-        std::cout << "그래프 창 표시 중..." << std::endl;
+        std::cout << "Displaying graph window..." << std::endl;
         RealtimePlotter plotter(reader);
         plotter.run();
         
     } catch (const std::exception& e) {
-        std::cerr << "오류: " << e.what() << std::endl;
+        std::cerr << "Error: " << e.what() << std::endl;
         return -1;
     }
     
-    std::cout << "프로그램 종료" << std::endl;
+    std::cout << "Program terminated" << std::endl;
     return 0;
 }
 
