@@ -7,6 +7,8 @@
 #include <deque>
 #include <mutex>
 #include <io.h>
+#include <cstdlib>
+#include <cmath>
 
 // Windows용 시리얼 통신
 #ifdef _WIN32
@@ -209,10 +211,93 @@ private:
     }
 };
 
+class SimulationReader {
+private:
+    std::atomic<bool> running{true};
+    std::atomic<int> sampleCount{0};
+    std::atomic<double> dataRate{0.0};
+
+    std::deque<uint16_t> dataBuffer;
+    std::mutex dataMutex;
+    static const size_t MAX_BUFFER_SIZE = 1000;
+
+public:
+    SimulationReader() {
+        std::cout << "Simulation mode initialized" << std::endl;
+    }
+
+    ~SimulationReader() {
+        running = false;
+    }
+
+    void startReading() {
+        std::thread readerThread(&SimulationReader::simulateLoop, this);
+        readerThread.detach();
+    }
+
+    void stop() {
+        running = false;
+    }
+
+    std::vector<uint16_t> getData() {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        return std::vector<uint16_t>(dataBuffer.begin(), dataBuffer.end());
+    }
+
+    double getDataRate() const {
+        return dataRate.load();
+    }
+
+private:
+    void simulateLoop() {
+        auto lastTime = std::chrono::steady_clock::now();
+        int samplesInPeriod = 0;
+        double time = 0.0;
+
+        while (running) {
+            // Generate simulated ADC data (sine wave with some noise)
+            double sineValue = 512 + 300 * std::sin(time * 2 * 3.14159 / 100.0); // Slow sine wave
+            double noise = (rand() % 100 - 50) * 0.5; // Random noise
+            uint16_t value = std::max(0.0, std::min(1023.0, sineValue + noise));
+
+            {
+                std::lock_guard<std::mutex> lock(dataMutex);
+                dataBuffer.push_back(value);
+                if (dataBuffer.size() > MAX_BUFFER_SIZE) {
+                    dataBuffer.pop_front();
+                }
+            }
+
+            sampleCount++;
+            samplesInPeriod++;
+            time += 1.0;
+
+            // Calculate rate (every second)
+            auto currentTime = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                currentTime - lastTime).count();
+
+            if (elapsed >= 1000) {
+                double rate = (double)samplesInPeriod * 1000.0 / elapsed;
+                dataRate = rate;
+                samplesInPeriod = 0;
+                lastTime = currentTime;
+
+                std::cout << "Simulation Rate: " << (int)rate << " Hz, Data: "
+                         << dataBuffer.size() << " samples" << std::endl;
+            }
+
+            // Simulate ~100 Hz data rate
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+};
+
+template<typename DataReader>
 class RealtimePlotter {
 private:
     sf::RenderWindow window;
-    SerialReader& serialReader;
+    DataReader& dataReader;
     sf::Font font;
     
     // 그래프 설정
@@ -221,9 +306,9 @@ private:
     static const int GRAPH_MARGIN = 50;
     
 public:
-    RealtimePlotter(SerialReader& reader) 
+    RealtimePlotter(DataReader& reader)
         : window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Arduino ADC Real-time Data")
-        , serialReader(reader) {
+        , dataReader(reader) {
         
         window.setFramerateLimit(60);
         
@@ -267,7 +352,7 @@ public:
             handleEvents();
             render();
         }
-        serialReader.stop();
+        dataReader.stop();
     }
     
 private:
@@ -284,7 +369,7 @@ private:
         window.clear(sf::Color::Black);
         
         // 데이터 가져오기
-        auto data = serialReader.getData();
+        auto data = dataReader.getData();
         
         if (data.size() > 1) {
             // 그래프 영역 계산
@@ -337,8 +422,8 @@ private:
     void drawInfo() {
         sf::Text title;
         title.setFont(font);
-        title.setString("Arduino ADC Real-time Data - " + 
-                       std::to_string((int)serialReader.getDataRate()) + " Hz");
+        title.setString("Arduino ADC Real-time Data - " +
+                       std::to_string((int)dataReader.getDataRate()) + " Hz");
         title.setCharacterSize(24);
         title.setFillColor(sf::Color::White);
         title.setPosition(10, 10);
@@ -369,37 +454,59 @@ int main() {
         SetConsoleOutputCP(CP_UTF8);
         SetConsoleCP(CP_UTF8);
 #endif
-        std::cout << "Arduino connecting..." << std::endl;
-        
-        // Get serial port from user input
-        std::string port;
-        std::cout << "Enter serial port (e.g., ";
+        std::cout << "Arduino Real-time Plotter" << std::endl;
+        std::cout << "1. Connect to Arduino" << std::endl;
+        std::cout << "2. Simulation mode (demo)" << std::endl;
+        std::cout << "Choose option (1 or 2): ";
+
+        std::string choice;
+        std::getline(std::cin, choice);
+
+        if (choice == "2") {
+            // Simulation mode
+            std::cout << "Starting simulation mode..." << std::endl;
+            SimulationReader simReader;
+            simReader.startReading();
+
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+
+            std::cout << "Displaying simulation window..." << std::endl;
+            RealtimePlotter plotter(simReader);
+            plotter.run();
+        } else {
+            // Arduino mode
+            std::cout << "Arduino connecting..." << std::endl;
+
+            // Get serial port from user input
+            std::string port;
+            std::cout << "Enter serial port (e.g., ";
 #ifdef _WIN32
-        std::cout << "COM6): ";
+            std::cout << "COM6): ";
 #else
-        std::cout << "/dev/ttyACM0): ";
+            std::cout << "/dev/ttyACM0): ";
 #endif
-        std::getline(std::cin, port);
-        
-        // Use default if empty
-        if (port.empty()) {
+            std::getline(std::cin, port);
+
+            // Use default if empty
+            if (port.empty()) {
 #ifdef _WIN32
-            port = "COM6";
+                port = "COM6";
 #else
-            port = "/dev/ttyACM0";
+                port = "/dev/ttyACM0";
 #endif
-            std::cout << "Using default port: " << port << std::endl;
+                std::cout << "Using default port: " << port << std::endl;
+            }
+
+            SerialReader reader(port, 2000000);
+            reader.startReading();
+
+            // Wait for Arduino initialization
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+
+            std::cout << "Displaying graph window..." << std::endl;
+            RealtimePlotter plotter(reader);
+            plotter.run();
         }
-        
-        SerialReader reader(port, 2000000);
-        reader.startReading();
-        
-        // Wait for Arduino initialization
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        
-        std::cout << "Displaying graph window..." << std::endl;
-        RealtimePlotter plotter(reader);
-        plotter.run();
         
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
