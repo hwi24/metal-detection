@@ -1,0 +1,20 @@
+{
+    "label": "build arduino plotter",
+    "type": "shell",
+    "command": "g++",
+    "args": [
+        "-std=c++17",
+        "-DUNICODE=0", 
+        "-D_UNICODE=0",
+        "-IC:/msys64/mingw64/include",  // ✅ include로 수정
+        "-LC:/msys64/mingw64/lib",      // ✅ lib 유지
+        "\"${file}\"",
+        "-lsfml-graphics",
+        "-lsfml-window", 
+        "-lsfml-system",
+        "-o",
+        "\"${fileDirname}/arduino_plotter.exe\""
+    ],
+    "group": "build",
+    "problemMatcher": ["$gcc"]
+}
