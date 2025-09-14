@@ -5,6 +5,7 @@ from collections import deque
 import threading
 import time
 
+
 # 설정
 PORT = 'COM6'  # Arduino 포트
 BAUD = 2000000
